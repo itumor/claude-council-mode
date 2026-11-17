@@ -1,0 +1,5 @@
+{
+  "name": "claude-council-mode",
+  "owner": { "name": "itumor" },
+  "plugins": [{ "name": "council", "source": "./" }]
+}
