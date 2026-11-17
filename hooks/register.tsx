@@ -3,13 +3,14 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { Config, Review, Run } from '../types'
 import {
-  DEFAULTS, LEAK, PROTOCOL, agentFor, applyReview, bufferEarly, expireStale, failedReview, lensPasses, lensViews, phase, roundOf, title,
-  finishSpawning, isLive, newRun, parseConfig, recordSpawn, reviewFrom, reviewerPrompt,
-  sanitizeConfig, startReview, verdict,
+  CAPS, DEFAULTS, LEAK, MOD_MARK, PROTOCOL, agentFor, applyReview, authorTextError, bufferEarly, clip, expireStale, failedReview, lensPasses, lensViews, phase, roundOf, title,
+  finishSpawning, isLive, newRun, parseConfig, recordSpawn, recoverReview, reviewFrom, reviewerPrompt,
+  sanitizeConfig, shouldNudge, startReview, toolConfigError, toolOffError, toolOnError, verdict,
 } from './gate'
 import type { LensView } from './gate'
 
 const enabled = atom({ plugin: 'council', key: 'enabled' } as const, false)
+const lockedOff = atom({ plugin: 'council', key: 'lockedOff' } as const, false)
 const config = atom({ plugin: 'council', key: 'config' } as const, DEFAULTS, { shape: 'config-1' })
 const run = atom({ plugin: 'council', key: 'run' } as const, null, { shape: 'run-2' })
 
@@ -27,21 +28,26 @@ async function setConfig($: EngineInterface, c: Config) {
   await $.store.set('config', c)
 }
 
-async function setEnabled($: EngineInterface, on: boolean) {
+// byUser: a person's own action (command, band or panel button). A user Off locks the tool out of turning it back on.
+async function setEnabled($: EngineInterface, on: boolean, byUser: boolean) {
   await update($, enabled, () => on)
+  if (byUser) await update($, lockedOff, () => !on)
   if (!on) await update($, run, r => (r && isLive(r) ? { ...r, status: 'cancelled' as const } : r))
   $.ui.toast(on ? 'Council Mode on: your next task gets a blind review loop.' : 'Council Mode off.')
 }
 
 // The last reviewer's answer closes a round; tell the lead once.
 // ponytail: two reviewers finishing in the same instant can announce twice (a duplicate message, harmless).
-async function announce($: EngineInterface, r: Run | null) {
-  if (!r?.announce) return
-  await update($, run, x => (x ? { ...x, announce: false } : x))
+// Returns the run as stored after the announce, so callers see lastVerdictAt.
+async function announce($: EngineInterface, r: Run | null): Promise<Run | null> {
+  if (!r?.announce) return r
+  const now = await $.clock.now()
+  const after = await update($, run, x => (x ? { ...x, announce: false, lastVerdictAt: now } : x))
   const last = r.rounds[r.rounds.length - 1]
-  if (!last) return
+  if (!last) return after
   $.ui.toast(`Council round ${last.number}: ${r.status.replace(/_/g, ' ')} (worst ${last.score})`)
   await $.prompt.submit({ text: verdict(r) })
+  return after
 }
 
 function summary(enabledNow: boolean, c: Config, r: Run | null) {
@@ -63,18 +69,27 @@ async function control($: EngineInterface, raw: string, fromTool: boolean, task?
   }
   if (arg === 'status') return summary(await read($, enabled), c, current)
   if (arg === 'off') {
-    if (fromTool && isLive(current)) return `A council is running. ${USER_ONLY}`
-    await setEnabled($, false)
+    // The gated agent never switches its gate off, live run or not.
+    if (fromTool) return `Council: ${toolOffError()} ${USER_ONLY}`
+    await setEnabled($, false, true)
     return 'Council Mode off. Any running council was cancelled (not passed).'
   }
   const parsed = parseConfig(arg, c)
   if (typeof parsed === 'string') return `Council: ${parsed}`
-  await setConfig($, parsed)
-  if (arg.split(/\s+/)[0] !== 'on') return summary(await read($, enabled), parsed, current)
-  if (fromTool && current?.status === 'needs_human_decision') {
-    return `The last council needs a human decision (round budget spent). A new run must come from the user typing the task. Settings saved.`
+  const turningOn = arg.split(/\s+/)[0] === 'on'
+  // The tool is the gated agent: every refusal comes before any write.
+  if (fromTool) {
+    // A live run keeps its own settings; the tool does not touch the stored ones meanwhile either.
+    const changes = parsed.target !== c.target || parsed.rounds !== c.rounds || parsed.reviewers !== c.reviewers
+    if (changes && isLive(current)) return 'Council: settings cannot change while a council is running; the user can change them in the panel for the next task. Nothing changed.'
+    const loosened = toolConfigError(c, parsed)
+    if (loosened) return `Council: ${loosened}. Nothing changed.`
+    const blocked = turningOn ? toolOnError({ run: current, lockedOff: await read($, lockedOff) }) : null
+    if (blocked) return `Council: ${blocked}. Nothing changed.`
   }
-  await setEnabled($, true)
+  await setConfig($, parsed)
+  if (!turningOn) return summary(await read($, enabled), parsed, current)
+  await setEnabled($, true, !fromTool)
   // Turned on mid-turn: this prompt already passed prompt.submit, so start the run here.
   if (task?.trim() && !isLive(current)) {
     const fresh = await update($, run, () => newRun(task, parsed))
@@ -83,8 +98,11 @@ async function control($: EngineInterface, raw: string, fromTool: boolean, task?
   return summary(true, parsed, await read($, run))
 }
 
-export const register: Register = on => {
+export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
+    // autoOn (a user setting, default off): Council is on from the session's start.
+    // session.start also runs on a hot reload: never override the user's own Off.
+    if (options.autoOn === true && !(await read($, lockedOff))) await update($, enabled, () => true)
     const saved = await $.store.get('config')
     if (saved !== undefined) await update($, config, () => sanitizeConfig(saved))
     await $.command.register({
@@ -111,7 +129,7 @@ export const register: Register = on => {
       name: 'mode',
       isDeferred: false,
       description:
-        'Control Council Mode when the user asks (turn on, settings, status, panel, off between tasks). args uses the /council grammar: "on [target 9] [rounds 5] [reviewers 3]", "off", "status", "panel", or settings alone. With "on", pass the user\'s task as task to start the council now. It cannot cancel a running council or restart one that needs a human decision.',
+        'Control Council Mode when the user asks (turn on, stricter settings, status, panel). args uses the /council grammar: "on [target 9] [rounds 5] [reviewers 3]", "status", "panel", or settings alone. With "on", pass the user\'s task as task to start the council now. It cannot turn Council off, loosen settings, cancel a running council, or restart one that needs a human decision: tell the user to use the panel for those.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -135,7 +153,8 @@ export const register: Register = on => {
 
   // Mode on + a typed task -> a run starts, and every prompt of it carries the protocol.
   on('prompt.submit', async ($, e, next) => {
-    const isOurs = e.origin.kind === 'plugin' || e.text.startsWith('[Council]')
+    // MOD_MARK opens with an invisible separator no one types, so a typed "[Council]" is still a task.
+    const isOurs = e.origin.kind === 'plugin' || e.text.startsWith(MOD_MARK)
     if (e.command || e.isMeta || isOurs || !(await read($, enabled))) return next(e)
     let r = await read($, run)
     if (!isLive(r)) {
@@ -166,7 +185,14 @@ export const register: Register = on => {
     if (LEAK.test(input.criteria) || LEAK.test(input.artifacts)) {
       return { deny: 'Reviewers must stay blind: remove anything naming scores, targets, thresholds or earlier rounds from criteria/artifacts.' }
     }
-    const checks = (input.checks ?? []).filter(x => typeof x === 'string')
+    const fenceError = authorTextError(input.criteria) ?? authorTextError(input.artifacts)
+    if (fenceError) return { deny: `criteria/artifacts ${fenceError}.` }
+    const checks = (Array.isArray(input.checks) ? input.checks : [])
+      .filter(x => typeof x === 'string')
+      .slice(0, CAPS.checks)
+      .map(x => clip(x, CAPS.check))
+    // A fresh random fence per round: author text cannot guess or forge the end marker.
+    const nonce = Array.from(crypto.getRandomValues(new Uint8Array(12)), b => b.toString(16).padStart(2, '0')).join('').toUpperCase()
 
     // Only one call wins the active -> reviewing step.
     let won = false
@@ -183,7 +209,7 @@ export const register: Register = on => {
     try {
       for (const lens of r.lenses) {
         const spawned = await $.agent.spawn({
-          prompt: reviewerPrompt(lens, input.criteria, input.artifacts),
+          prompt: reviewerPrompt(lens, input.criteria, input.artifacts, nonce),
           subagentType: agentFor(lens),
           description: `council ${lens} review`,
         })
@@ -211,39 +237,55 @@ export const register: Register = on => {
   on('turn.complete', async ($, e, next) => {
     if (e.agentId) {
       const agentId = e.agentId
-      const r = await read($, run)
-      const slot = r?.pending.find(p => p.agentId === agentId)
-      if (slot) {
-        let review: Review
-        try {
-          review = reviewFrom(e.answer, e.reason, slot.lens, agentId)
-        } catch {
-          review = failedReview(slot.lens, agentId, 'reviewer answer could not be read')
+      try {
+        const r = await read($, run)
+        const slot = r?.pending.find(p => p.agentId === agentId)
+        if (slot) {
+          let review: Review
+          try {
+            review = reviewFrom(e.answer, e.reason, slot.lens, agentId)
+            if (review.error && e.reason === 'answer') {
+              // The hand-back may have been refused (auto mode): look in the reviewer's own earlier messages.
+              const msgs = await $.session.messages({ agentId })
+              const own = Array.isArray(msgs) ? msgs.filter(m => m.role === 'assistant').map(m => m.text) : []
+              review = recoverReview(e.answer, own, slot.lens, agentId)
+            }
+          } catch {
+            review = failedReview(slot.lens, agentId, 'reviewer answer could not be read')
+          }
+          await announce($, await update($, run, x => (x ? applyReview(x, review) : x)))
+        } else if (r?.status === 'reviewing') {
+          // Ended before its spawn was recorded (or not ours): keep it for recordSpawn.
+          await update($, run, x => (x ? bufferEarly(x, agentId, e.answer, e.reason) : x))
         }
-        await announce($, await update($, run, x => (x ? applyReview(x, review) : x)))
-      } else if (r?.status === 'reviewing') {
-        // Ended before its spawn was recorded (or not ours): keep it for recordSpawn.
-        await update($, run, x => (x ? bufferEarly(x, agentId, e.answer, e.reason) : x))
+      } catch {
+        // ponytail: a failure here leaves the slot pending; expireStale closes the round as invalid.
       }
       return next(e)
     }
     // The gate: a main-loop answer while a council is active (no round passed, budget left)
     // queues a nudge turn. classic.Stop is not used: an org policy plugin can pass it by.
     const done = await next(e)
-    const now = await $.clock.now()
-    const r = await update($, run, x => (x ? expireStale(x, now) : x))
-    await announce($, r)
-    if (e.reason !== 'answer' || !r || r.status !== 'active') return done
-    if (r.stopBlocks >= MAX_STOP_BLOCKS) {
-      $.ui.toast('Council gate stopped nudging after 3 turns with no review. The run stays unpassed.')
-      return done
+    try {
+      const now = await $.clock.now()
+      const expired = await update($, run, x => (x ? expireStale(x, now) : x))
+      const r = await announce($, expired)
+      const ctx = { enabled: await read($, enabled), run: r, reason: e.reason, turnStartedAt: now - e.durationMs, maxNudges: MAX_STOP_BLOCKS }
+      if (!shouldNudge(ctx)) {
+        if (r?.status === 'active' && r.stopBlocks >= MAX_STOP_BLOCKS && ctx.enabled) {
+          $.ui.toast('Council gate stopped nudging after 3 turns with no review. The run stays unpassed.')
+        }
+        return done
+      }
+      await update($, run, x => (x ? { ...x, stopBlocks: x.stopBlocks + 1 } : x))
+      await $.prompt.submit({
+        text: `${MOD_MARK} COUNCIL MODE ACTIVE (${r?.rounds.length ?? 0}/${r?.config.rounds ?? 0} rounds used). Do not claim completion. Finish or fix the work, run real checks, then call ${TOOL}. If you are blocked, say what blocks you; only the user can cancel the council.`,
+      })
+    } catch {
+      // The gate fails open on its own errors: the answer already went through.
     }
-    await update($, run, x => (x ? { ...x, stopBlocks: x.stopBlocks + 1 } : x))
-    await $.prompt.submit({
-      text: `[Council] COUNCIL MODE ACTIVE (${r.rounds.length}/${r.config.rounds} rounds used). Do not claim completion. Finish or fix the work, run real checks, then call ${TOOL}. If you are blocked, say what blocks you; only the user can cancel the council.`,
-    })
     return done
-  }).catch(($, e, next) => (next.called ? { text: e.answer } : next(e)))
+  })
 
   // Only the Council spawns its reviewers, so the lead cannot hand-pick or reuse one.
   on('agent.offer', ($, e, next) => (e.agent.startsWith('council:') ? { isOffered: false } : next(e))).catch(
@@ -274,7 +316,7 @@ export const register: Register = on => {
             <Text dimColor>Target {c.target}</Text>
           )}
           <Button key="panel" label="Details" onPress={() => void openPane($)} />
-          <Button key="off" label="Off" onPress={() => setEnabled($, false)} />
+          <Button key="off" label="Off" onPress={() => setEnabled($, false, true)} />
         </Box>
         {r && lensViews(r).map(v => lensRow(Box, Text, v))}
       </Box>
@@ -346,7 +388,7 @@ export const register: Register = on => {
       <Box flexDirection="column" gap={1}>
         <Box justifyContent="space-between">
           <Text bold>Council {isOn ? 'on' : 'off'}</Text>
-          <Button key="toggle" label={isOn ? 'Turn off' : 'Turn on'} variant={isOn ? 'secondary' : 'primary'} onPress={() => setEnabled($, !isOn)} />
+          <Button key="toggle" label={isOn ? 'Turn off' : 'Turn on'} variant={isOn ? 'secondary' : 'primary'} onPress={() => setEnabled($, !isOn, true)} />
         </Box>
         <Text dimColor>Reviewers score the work until all reach your target. Lowest score counts; critical/high findings block. Settings apply to the next task.</Text>
         {seg('target', 'Target score', [7, 8, 8.5, 9, 9.5, 10])}
@@ -355,7 +397,7 @@ export const register: Register = on => {
         {!r && <Text dimColor>No council run yet. Turn it on, then type a task.</Text>}
         {r && (
           <Box flexDirection="column">
-            <Text>Task: {r.task}</Text>
+            <Text>Task: {clip(r.task, 200)}</Text>
             <Text dimColor>
               Round {p.round} of {r.config.rounds} · {p.label} · target {r.config.target}
             </Text>
@@ -367,13 +409,14 @@ export const register: Register = on => {
             {lensViews(r).map(v => (
               <Box key={`detail-${v.lens}`} flexDirection="column" marginTop={1}>
                 {lensRow(Box, Text, v)}
-                {v.review?.error && <Text color="red">{'  '}invalid: {v.review.error}</Text>}
+                {v.review?.error && <Text color="red">{'  '}invalid: {clip(v.review.error, 120)}</Text>}
+                {v.review?.recovered && <Text dimColor>{'  '}recovered from an earlier reviewer message</Text>}
                 {v.review?.findings.map((f, i) => (
                   <Text key={`f-${v.lens}-${i}`} color={f.severity === 'critical' || f.severity === 'high' ? 'red' : undefined}>
-                    {'  '}[{f.severity}] {f.location}: {f.evidence}
+                    {'  '}[{f.severity}] {clip(f.location, 160)}: {clip(f.evidence)}
                   </Text>
                 ))}
-                {v.review && v.review.limitations.length > 0 && <Text dimColor>{'  '}limits: {v.review.limitations.join('; ')}</Text>}
+                {v.review && v.review.limitations.length > 0 && <Text dimColor>{'  '}limits: {clip(v.review.limitations.join('; '))}</Text>}
               </Box>
             ))}
           </Box>

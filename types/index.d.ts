@@ -15,6 +15,8 @@ export type Review = {
   verified: string[]
   limitations: string[]
   error?: string
+  /** Set by the mod (never by the reviewer) when the review came from an earlier message. */
+  recovered?: true
 }
 
 export type Round = {
@@ -44,12 +46,16 @@ export type Run = {
   /** True while the review tool is still spawning: the round must not close early. */
   spawning?: boolean
   reviewingSince?: number
+  /** When the last verdict was posted: no nudge for a turn that saw one. */
+  lastVerdictAt?: number
 }
 
 declare module 'claude-code' {
   interface PluginState {
     council: {
       enabled: boolean
+      /** The user turned Council off: the mode tool may not turn it back on. */
+      lockedOff: boolean
       config: Shaped<Config>
       run: Shaped<Run | null>
     }

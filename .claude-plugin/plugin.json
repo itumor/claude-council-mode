@@ -1,6 +1,14 @@
 {
   "name": "council",
-  "version": "0.4.0",
+  "version": "0.6.0",
   "description": "Council Mode: toggle a blind multi-reviewer quality gate (lowest score wins, fresh reviewers each round, bounded rounds) with a score band and panel.",
-  "types": "./types/index.d.ts"
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "autoOn": {
+      "type": "boolean",
+      "title": "Council on at session start",
+      "description": "Turn Council Mode on in every new session, so every task gets the review loop. Uses 2+ reviewer agents per round.",
+      "default": false
+    }
+  }
 }

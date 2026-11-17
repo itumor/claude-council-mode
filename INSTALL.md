@@ -36,6 +36,16 @@ claude plugin install council@claude-council-mode
 2. Run `claude plugin list` and look for `council@claude-council-mode` with `Status: ✔ enabled`.
 3. In the session type `/council status` (terminal) or ask `council status` (desktop app).
 
+## Council on in every session
+
+Install with the setting on:
+
+```bash
+claude plugin install council --marketplace itumor/claude-council-mode --config autoOn=true
+```
+
+Already installed: open the config menu (`/config` in a terminal session), find the council row, set `autoOn` on, then start a new session.
+
 ## Update
 
 ```bash
@@ -46,7 +56,7 @@ claude plugin marketplace update claude-council-mode
 claude plugin update council@claude-council-mode
 ```
 
-Then start a new session. `claude plugin list` shows the version from `.claude-plugin/plugin.json` (0.4.0 at time of writing).
+Then start a new session. `claude plugin list` shows the version from `.claude-plugin/plugin.json` (0.6.0 at time of writing).
 
 ## Remove
 
