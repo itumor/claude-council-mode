@@ -1,6 +1,6 @@
 # Install Council Mode
 
-Needs a Claude Code build with the mods API (function hooks). Check with `claude --version`.
+Needs a Claude Code build with the mods API (function hooks). Tested on Claude Code 2.1.326 (`claude --version`); older builds may not load mods.
 
 ## Option A: from GitHub (normal)
 
@@ -19,11 +19,11 @@ Desktop app: click + next to the prompt box, Plugins, Add marketplace `itumor/cl
 ## Option B: from a local clone
 
 ```bash
-git clone https://github.com/itumor/claude-council-mode.git ~/Council/council-mod
+git clone https://github.com/itumor/claude-council-mode.git ~/src/claude-council-mode
 ```
 
 ```bash
-claude plugin marketplace add ~/Council/council-mod
+claude plugin marketplace add ~/src/claude-council-mode
 ```
 
 ```bash
@@ -33,7 +33,7 @@ claude plugin install council@claude-council-mode
 ## Check it works
 
 1. Start a new Claude Code session (mods load at session start).
-2. Run `claude plugin list` and look for `council` with status `loaded`.
+2. Run `claude plugin list` and look for `council@claude-council-mode` with `Status: ✔ enabled`.
 3. In the session type `/council status` (terminal) or ask `council status` (desktop app).
 
 ## Update
@@ -41,6 +41,12 @@ claude plugin install council@claude-council-mode
 ```bash
 claude plugin marketplace update claude-council-mode
 ```
+
+```bash
+claude plugin update council@claude-council-mode
+```
+
+Then start a new session. `claude plugin list` shows the version from `.claude-plugin/plugin.json` (0.4.0 at time of writing).
 
 ## Remove
 

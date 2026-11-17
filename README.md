@@ -66,6 +66,6 @@ Who controls the gate: Claude can turn the mode on, change settings and read sta
 
 ## Develop
 
-`claude plugin test .` runs `hooks/gate.test.ts`. Type-check with `npx tsc -p .` after the mod has loaded once: the engine writes this build's API types into `.claude-plugin/types/` (gitignored, regenerated per Claude Code version).
+`claude plugin test .` runs `hooks/gate.test.ts` and `hooks/ui.test.tsx`. Type-check with `npx tsc -p .` after the mod has loaded once: the engine writes this build's API types into `.claude-plugin/types/` (gitignored, regenerated per Claude Code version).
 
 Files: `hooks/register.tsx` (hooks + UI), `hooks/gate.ts` (pure scoring logic), `hooks/gate.test.ts`, `agents/` (reviewers), `types/` (state contract).
