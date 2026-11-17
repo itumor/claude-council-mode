@@ -1,5 +1,5 @@
 // Pure Council logic: no `$`, so the test can drive it directly.
-import type { Config, Finding, Review, Round, Run } from '../types'
+import type { Config, Finding, Review, Round, Run } from '../contract'
 
 export const DEFAULTS: Config = { target: 9, rounds: 5, reviewers: 3 }
 export const LIMITS = { target: [7, 10], rounds: [1, 10], reviewers: [2, 5] } as const

@@ -1,8 +1,8 @@
 {
   "name": "council",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Council Mode: toggle a blind multi-reviewer quality gate (lowest score wins, fresh reviewers each round, bounded rounds) with a score band and panel.",
-  "types": "./types/index.d.ts",
+  "types": "./contract/index.d.ts",
   "userConfig": {
     "autoOn": {
       "type": "boolean",

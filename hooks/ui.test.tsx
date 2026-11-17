@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import { applyReview, finishSpawning, newRun, parseReview, recordSpawn, startReview } from './gate'
-import type { Run } from '../types'
+import type { Run } from '../contract'
 
 const review = (score: number, findings: unknown[] = []) =>
   JSON.stringify({ score, findings, verified: ['read hosts.ts'], limitations: [] })

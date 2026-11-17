@@ -56,7 +56,7 @@ claude plugin marketplace update claude-council-mode
 claude plugin update council@claude-council-mode
 ```
 
-Then start a new session. `claude plugin list` shows the version from `.claude-plugin/plugin.json` (0.6.0 at time of writing).
+Then start a new session. `claude plugin list` shows the version from `.claude-plugin/plugin.json` (0.6.1 at time of writing).
 
 ## Remove
 

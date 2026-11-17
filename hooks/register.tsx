@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { Config, Review, Run } from '../types'
+import type { Config, Review, Run } from '../contract'
 import {
   CAPS, DEFAULTS, LEAK, MOD_MARK, PROTOCOL, agentFor, applyReview, authorTextError, bufferEarly, clip, expireStale, failedReview, lensPasses, lensViews, phase, roundOf, title,
   finishSpawning, isLive, newRun, parseConfig, recordSpawn, recoverReview, reviewFrom, reviewerPrompt,

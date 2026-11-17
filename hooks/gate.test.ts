@@ -4,7 +4,7 @@ import {
   CAPS, DEFAULTS, LEAK, MOD_MARK, applyReview, authorTextError, bufferEarly, clip, closeRound, expireStale, finishSpawning, lensViews, newRun, parseConfig, phase, roundOf,
   parseReview, recordSpawn, recoverReview, reviewerPrompt, sanitizeConfig, shouldNudge, startReview, toolConfigError, toolOffError, toolOnError, verdict,
 } from './gate'
-import type { Run } from '../types'
+import type { Run } from '../contract'
 
 const ok = (score: number, findings: unknown[] = []) =>
   `Here is my review:\n${JSON.stringify({ lens: 'ignored', score, findings, verified: ['read app.py'], limitations: [] })}`
