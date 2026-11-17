@@ -1,10 +1,12 @@
-# Council Mode (Claude Code mod) v0.3
+# Council Mode (Claude Code mod) v0.4
 
 Toggle-able quality gate: Claude plans, implements, then a council of fresh, blind reviewer subagents scores the work. Lowest score decides, critical/high findings block, rounds are bounded, and an exhausted budget hands the decision back to you.
 
 Inspired by the Council workflow shown in https://youtu.be/-0sRekR9sZ4. Independent implementation; not affiliated with Anthropic or PandaCode. Uses the early-access Claude Code mods API (function hooks), which may change between releases.
 
 ## Install
+
+Full steps (local clone, check, update, remove): [INSTALL.md](INSTALL.md).
 
 At the prompt of a terminal session:
 
@@ -34,7 +36,7 @@ Terminal:
 
 Desktop app (mod slash commands don't show there): just ask, e.g. `Council on, rounds 2 reviewers 2. Task: ...`, `council panel`, `council off`. Claude drives the same grammar through the `mcp__council__mode` tool.
 
-Band above the prompt while on: status, round, worst score vs target, Panel / Off buttons.
+UI while on: band above the prompt (`Round N of M · reviewing|fixing`, lowest score vs target, one row per lens with its score), footer label `council · <target>`, per-lens results under each review call, and a panel with segmented target/rounds/reviewers buttons plus each reviewer's findings.
 
 ## How it works
 

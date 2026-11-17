@@ -3,10 +3,11 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { Config, Review, Run } from '../types'
 import {
-  DEFAULTS, LEAK, PROTOCOL, agentFor, applyReview, bufferEarly, expireStale, failedReview,
+  DEFAULTS, LEAK, PROTOCOL, agentFor, applyReview, bufferEarly, expireStale, failedReview, lensPasses, lensViews, phase, roundOf, title,
   finishSpawning, isLive, newRun, parseConfig, recordSpawn, reviewFrom, reviewerPrompt,
   sanitizeConfig, startReview, verdict,
 } from './gate'
+import type { LensView } from './gate'
 
 const enabled = atom({ plugin: 'council', key: 'enabled' } as const, false)
 const config = atom({ plugin: 'council', key: 'config' } as const, DEFAULTS, { shape: 'config-1' })
@@ -249,84 +250,130 @@ export const register: Register = on => {
     ($, e, next) => next(e),
   )
 
+  // Band above the prompt: round header, then one row per lens (lowest score counts).
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (e.props.hasSurvey || !(await read($, enabled))) return next(e)
     const { Box, Text, Button } = $.ui.resolve(e)
     const r = await read($, run)
     const c = r?.config ?? (await read($, config))
+    const p = phase(r)
     const last = r?.rounds[r.rounds.length - 1]
-    const state = !r
-      ? 'waiting for a task'
-      : r.status === 'reviewing'
-        ? `reviewing ${r.partial.length}/${r.lenses.length}`
-        : r.status.replace(/_/g, ' ')
+    const scored = last && r?.status !== 'reviewing'
     return (
-      <Box>
-        <Text color="cyan">Council </Text>
-        <Text>
-          {state} · round {r?.rounds.length ?? 0}/{c.rounds} · worst {last ? last.score : '-'} / {c.target}{' '}
-        </Text>
-        <Button key="panel" label="Panel" onPress={() => void openPane($)} />
-        <Button key="off" label="Off" onPress={() => setEnabled($, false)} />
+      <Box flexDirection="column">
+        <Box gap={1}>
+          <Text color="cyan">Council</Text>
+          <Text>
+            Round {p.round} of {c.rounds} · {p.label}
+          </Text>
+          {scored ? (
+            <Text color={last.passed ? 'green' : 'yellow'}>
+              {last.score} / {c.target}
+            </Text>
+          ) : (
+            <Text dimColor>Target {c.target}</Text>
+          )}
+          <Button key="panel" label="Details" onPress={() => void openPane($)} />
+          <Button key="off" label="Off" onPress={() => setEnabled($, false)} />
+        </Box>
+        {r && lensViews(r).map(v => lensRow(Box, Text, v))}
       </Box>
     )
   }).catch(($, e, next) => next(e))
 
+  // Footer mode label, so "on" still shows with the band collapsed.
+  on('ui.render', { component: 'SessionMode' }, async ($, e, next) => {
+    if (!(await read($, enabled))) return next(e)
+    const c = (await read($, run))?.config ?? (await read($, config))
+    return next({ ...e, props: { ...e.props, modes: [...e.props.modes, `council · ${c.target}`] } })
+  }).catch(($, e, next) => next(e))
+
+  // Under each review call's row: who reviewed what in that round, and how it scored.
+  on('ui.render', { component: 'ToolUse' }, async ($, e, next) => {
+    if (e.props.tool !== TOOL || e.props.isRunning || e.props.isErrored) return next(e)
+    const n = roundOf(e.props.output)
+    const r = await read($, run)
+    if (!r || n === null) return next(e)
+    const closed = r.rounds.find(x => x.number === n)
+    const live = !closed && r.status === 'reviewing' && n === r.rounds.length + 1
+    if (!closed && !live) return next(e)
+    const target = r.config.target
+    const { Box, Text } = $.ui.resolve(e)
+    const rows = closed
+      ? closed.reviews.map(v => ({ lens: v.lens, text: `${v.score} · ${lensPasses(v, target) ? 'at target' : `below ${target}`}`, color: lensPasses(v, target) ? 'green' : 'yellow' }))
+      : lensViews(r).map(v => ({ lens: v.lens, text: v.score === undefined ? 'Working' : `${v.score}`, color: v.score === undefined ? 'magenta' : v.state === 'pass' ? 'green' : 'yellow' }))
+    const row = await next(e)
+    return (
+      <Box flexDirection="column">
+        {row}
+        {rows.map(x => (
+          <Box key={`rev-${n}-${x.lens}`} justifyContent="space-between">
+            <Text>
+              <Text dimColor>Reviewed </Text>
+              <Text bold>{title(x.lens)}</Text>
+              <Text dimColor> · round {n}</Text>
+            </Text>
+            <Text color={x.color}>{x.text}</Text>
+          </Box>
+        ))}
+      </Box>
+    )
+  }).catch(($, e, next) => next(e))
+
+  // Pane: settings as segmented buttons, then the run's rounds and each reviewer's findings.
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const { Box, Text, Button, Select, Progress } = $.ui.resolve(e)
+    const { Box, Text, Button } = $.ui.resolve(e)
     const isOn = await read($, enabled)
     const c = await read($, config)
     const r = await read($, run)
-    const pick = (key: keyof Config, values: number[]) => (
-      <Select
-        key={key}
-        label={`${key}: `}
-        value={String(c[key])}
-        options={values.map(v => ({ value: String(v), label: String(v) }))}
-        onSelect={v => setConfig($, { ...c, [key]: Number(v) })}
-      />
-    )
-    const last = r?.rounds[r.rounds.length - 1]
-    return (
-      <Box flexDirection="column">
-        <Box>
-          <Text bold>Council Mode {isOn ? 'ON' : 'off'} </Text>
-          <Button key="toggle" label={isOn ? 'Turn off' : 'Turn on'} onPress={() => setEnabled($, !isOn)} />
+    const seg = (key: keyof Config, name: string, values: number[]) => (
+      <Box key={`seg-${key}`} flexDirection="column">
+        <Text dimColor>{name}</Text>
+        <Box gap={1}>
+          {values.map(v => (
+            <Button
+              key={`${key}-${v}`}
+              label={String(v)}
+              variant={c[key] === v ? 'primary' : 'secondary'}
+              onPress={() => setConfig($, { ...c, [key]: v })}
+            />
+          ))}
         </Box>
-        {pick('target', [7, 7.5, 8, 8.5, 9, 9.5, 10])}
-        {pick('rounds', [1, 2, 3, 4, 5, 6, 7, 8, 9, 10])}
-        {pick('reviewers', [2, 3, 4, 5])}
-        <Text dimColor>Lowest score decides. Critical/high findings block. Settings apply to the next task.</Text>
+      </Box>
+    )
+    const p = phase(r)
+    return (
+      <Box flexDirection="column" gap={1}>
+        <Box justifyContent="space-between">
+          <Text bold>Council {isOn ? 'on' : 'off'}</Text>
+          <Button key="toggle" label={isOn ? 'Turn off' : 'Turn on'} variant={isOn ? 'secondary' : 'primary'} onPress={() => setEnabled($, !isOn)} />
+        </Box>
+        <Text dimColor>Reviewers score the work until all reach your target. Lowest score counts; critical/high findings block. Settings apply to the next task.</Text>
+        {seg('target', 'Target score', [7, 8, 8.5, 9, 9.5, 10])}
+        {seg('rounds', 'Max rounds', [1, 2, 3, 5, 10])}
+        {seg('reviewers', 'Reviewers', [2, 3, 4, 5])}
         {!r && <Text dimColor>No council run yet. Turn it on, then type a task.</Text>}
         {r && (
           <Box flexDirection="column">
             <Text>Task: {r.task}</Text>
-            <Text>Status: {r.status.replace(/_/g, ' ')} · lenses {r.lenses.join(', ')}</Text>
+            <Text dimColor>
+              Round {p.round} of {r.config.rounds} · {p.label} · target {r.config.target}
+            </Text>
             {r.rounds.map(x => (
-              <Progress
-                key={`round-${x.number}`}
-                label={`Round ${x.number}${x.passed ? ' passed' : ''}`}
-                value={x.score}
-                max={10}
-                valueText={`${x.score} / ${r.config.target}, ${x.blockers} blocking`}
-                color={x.passed ? 'green' : 'red'}
-              />
+              <Text key={`round-${x.number}`} color={x.passed ? 'green' : 'yellow'}>
+                Round {x.number}: {x.score} / {r.config.target}, {x.blockers} blocking{x.passed ? ' · passed' : ''}
+              </Text>
             ))}
-            {r.status === 'reviewing' && (
-              <Progress label="Reviewers reporting" value={r.partial.length} max={r.lenses.length} valueText={`${r.partial.length} of ${r.lenses.length}`} />
-            )}
-            {last?.reviews.map(v => (
-              <Box key={`review-${v.agentId}`} flexDirection="column">
-                <Text bold>
-                  {v.lens}: {v.score}
-                  {v.error ? ` (invalid: ${v.error})` : ''}
-                </Text>
-                {v.findings.map((f, i) => (
-                  <Text key={`f-${v.agentId}-${i}`} color={f.severity === 'critical' || f.severity === 'high' ? 'red' : undefined}>
+            {lensViews(r).map(v => (
+              <Box key={`detail-${v.lens}`} flexDirection="column" marginTop={1}>
+                {lensRow(Box, Text, v)}
+                {v.review?.error && <Text color="red">{'  '}invalid: {v.review.error}</Text>}
+                {v.review?.findings.map((f, i) => (
+                  <Text key={`f-${v.lens}-${i}`} color={f.severity === 'critical' || f.severity === 'high' ? 'red' : undefined}>
                     {'  '}[{f.severity}] {f.location}: {f.evidence}
                   </Text>
                 ))}
-                {v.limitations.length > 0 && <Text dimColor>{'  '}limits: {v.limitations.join('; ')}</Text>}
+                {v.review && v.review.limitations.length > 0 && <Text dimColor>{'  '}limits: {v.review.limitations.join('; ')}</Text>}
               </Box>
             ))}
           </Box>
@@ -337,4 +384,29 @@ export const register: Register = on => {
     const { Text } = $.ui.resolve(e)
     return <Text dimColor>Council panel failed to draw; see the debug log.</Text>
   })
+}
+
+const MARK = {
+  pass: { icon: '✓', color: 'green' },
+  fail: { icon: '!', color: 'yellow' },
+  reviewing: { icon: '•', color: 'magenta' },
+  waiting: { icon: '·', color: undefined },
+} as const
+
+// ponytail: Box/Text passed in, not a component: each surface resolves its own element table.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function lensRow(Box: any, Text: any, v: LensView) {
+  const m = MARK[v.state]
+  const right = v.score === undefined ? title(v.state) : `${v.score}${v.blockers ? ` · ${v.blockers} blocking` : ''}`
+  return (
+    <Box key={`lens-${v.lens}`} justifyContent="space-between">
+      <Text>
+        <Text color={m.color}>{m.icon} </Text>
+        <Text color={v.state === 'fail' ? 'yellow' : undefined}>{title(v.lens)}</Text>
+      </Text>
+      <Text color={v.state === 'fail' ? 'yellow' : undefined} dimColor={v.state !== 'fail'}>
+        {right}
+      </Text>
+    </Box>
+  )
 }

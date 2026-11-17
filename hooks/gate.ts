@@ -232,3 +232,38 @@ export const PROTOCOL = (run: Run) => `COUNCIL MODE is on for this task. Rules:
 4. The Council spawns ${run.lenses.length} fresh, blind reviewers (${run.lenses.join(', ')}). The LOWEST score decides; any critical/high finding blocks. End your turn after calling it; the verdict arrives as a new message.
 5. On failure: fix, re-check, call review again. Budget: ${run.config.rounds} rounds. Out of budget = report NEEDS HUMAN DECISION, never success.
 You cannot spawn council reviewers yourself, cancel a running council, or restart one that needs a human decision. Only the user can.`
+
+// ---- View helpers for the band, pane and review row (pure, tested) ----
+
+export type LensView = { lens: string; state: 'waiting' | 'reviewing' | 'pass' | 'fail'; score?: number; blockers: number; review?: Review }
+
+const blocking = (r: Review) => r.findings.filter(f => f.severity === 'critical' || f.severity === 'high').length
+export const lensPasses = (r: Review, target: number) => !r.error && r.score >= target && blocking(r) === 0
+
+export const title = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
+
+// The round the band is about: the one under review, else the last closed one.
+export function phase(run: Run | null): { round: number; label: string } {
+  if (!run) return { round: 0, label: 'waiting for a task' }
+  const closed = run.rounds.length
+  if (run.status === 'reviewing') return { round: closed + 1, label: 'reviewing' }
+  if (run.status === 'active') return { round: closed, label: closed ? 'fixing' : 'building' }
+  return { round: closed, label: run.status === 'needs_human_decision' ? 'needs your decision' : run.status }
+}
+
+// One row per lens: live answers while reviewing, else the last round's reviews.
+export function lensViews(run: Run): LensView[] {
+  const reviewing = run.status === 'reviewing'
+  const reviews = reviewing ? run.partial : (run.rounds[run.rounds.length - 1]?.reviews ?? [])
+  return run.lenses.map(lens => {
+    const review = reviews.find(r => r.lens === lens)
+    if (!review) return { lens, state: reviewing ? 'reviewing' : 'waiting', blockers: 0 }
+    return { lens, state: lensPasses(review, run.config.target) ? 'pass' : 'fail', score: review.score, blockers: blocking(review), review }
+  })
+}
+
+// The review tool's result text names its round: "Council round 2/5: ...".
+export const roundOf = (output: unknown) => {
+  const m = /Council round (\d+)\//.exec(typeof output === 'string' ? output : JSON.stringify(output ?? ''))
+  return m ? Number(m[1]) : null
+}

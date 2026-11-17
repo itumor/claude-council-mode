@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import {
-  DEFAULTS, LEAK, applyReview, bufferEarly, expireStale, finishSpawning, newRun, parseConfig,
+  DEFAULTS, LEAK, applyReview, bufferEarly, expireStale, finishSpawning, lensViews, newRun, parseConfig, phase, roundOf,
   parseReview, recordSpawn, reviewerPrompt, sanitizeConfig, startReview, verdict,
 } from './gate'
 import type { Run } from '../types'
@@ -130,4 +130,21 @@ test('reviewer prompt fences author text; verdict fences and clips reviewer text
   expect(v).toContain('untrusted data')
   expect(v.includes('x'.repeat(500))).toBe(false)
   expect(v.split('```').length).toBe(3)
+})
+
+test('view helpers: phase, lens rows, round from tool output', async () => {
+  expect(phase(null).label).toBe('waiting for a task')
+  let r = reviewing()
+  expect(phase(r)).toEqual({ round: 1, label: 'reviewing' })
+  r = applyReview(r, parseReview(ok(9.5), 'security', 'a1'))
+  expect(lensViews(r).map(v => v.state)).toEqual(['pass', 'reviewing'])
+  const high = { severity: 'high', location: 'a.py:1', evidence: 'x', fix: 'y' }
+  r = applyReview(r, parseReview(ok(9.5, [high]), 'correctness', 'a2'))
+  expect(phase(r)).toEqual({ round: 1, label: 'fixing' })
+  const views = lensViews(r)
+  expect(views.map(v => v.state)).toEqual(['pass', 'fail'])
+  expect(views[1]?.blockers).toBe(1)
+  expect(roundOf('Council round 3/5: 2 fresh reviewers launched')).toBe(3)
+  expect(roundOf({ result: 'Council round 4/10: x' })).toBe(4)
+  expect(roundOf('denied')).toBe(null)
 })
