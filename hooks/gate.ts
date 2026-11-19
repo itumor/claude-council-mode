@@ -1,7 +1,7 @@
 // Pure Council logic: no `$`, so the test can drive it directly.
 import type { Config, Finding, Review, Round, Run } from '../contract'
 
-export const DEFAULTS: Config = { target: 9, rounds: 5, reviewers: 3 }
+export const DEFAULTS: Config = { target: 8, rounds: 2, reviewers: 2 }
 export const LIMITS = { target: [7, 10], rounds: [1, 10], reviewers: [2, 5] } as const
 export const REVIEW_TTL_MS = 20 * 60 * 1000
 const MAX_EARLY = 20

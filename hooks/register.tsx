@@ -108,7 +108,7 @@ export const register: Register = (on, options) => {
     await $.command.register({
       name: 'council',
       description: 'Council Mode: on | off | status | panel | target N rounds N reviewers N',
-      argumentHint: 'on|off|status|panel [target 9] [rounds 5] [reviewers 3]',
+      argumentHint: 'on|off|status|panel [target 8] [rounds 2] [reviewers 2]',
     })
     await $.tool.register({
       name: 'review',
@@ -129,7 +129,7 @@ export const register: Register = (on, options) => {
       name: 'mode',
       isDeferred: false,
       description:
-        'Control Council Mode when the user asks (turn on, stricter settings, status, panel). args uses the /council grammar: "on [target 9] [rounds 5] [reviewers 3]", "status", "panel", or settings alone. With "on", pass the user\'s task as task to start the council now. It cannot turn Council off, loosen settings, cancel a running council, or restart one that needs a human decision: tell the user to use the panel for those.',
+        'Control Council Mode when the user asks (turn on, stricter settings, status, panel). args uses the /council grammar: "on [target 8] [rounds 2] [reviewers 2]", "status", "panel", or settings alone. With "on", pass the user\'s task as task to start the council now. It cannot turn Council off, loosen settings, cancel a running council, or restart one that needs a human decision: tell the user to use the panel for those.',
       inputSchema: {
         type: 'object',
         properties: {

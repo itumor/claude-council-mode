@@ -103,7 +103,8 @@ test('a stuck round times out as invalid', async () => {
 })
 
 test('config parsing, stored config and leak guard', async () => {
-  expect(parseConfig('on target 8 rounds 3', DEFAULTS)).toEqual({ target: 8, rounds: 3, reviewers: 3 })
+  expect(DEFAULTS).toEqual({ target: 8, rounds: 2, reviewers: 2 })
+  expect(parseConfig('on target 8 rounds 3', DEFAULTS)).toEqual({ target: 8, rounds: 3, reviewers: 2 })
   for (const bad of ['reviewers 9', 'toString 1', 'constructor 2', 'target', 'rounds 2.5', 'target x']) {
     expect(typeof parseConfig(bad, DEFAULTS)).toBe('string')
   }
